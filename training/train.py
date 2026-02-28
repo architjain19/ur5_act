@@ -104,7 +104,7 @@ def main():
         if cap_major >= 7:
             _use_cuda = True
         else:
-            print(f"⚠  GPU {torch.cuda.get_device_name(0)} has CUDA capability "
+            print(f"WARNING: GPU {torch.cuda.get_device_name(0)} has CUDA capability "
                   f"sm_{cap_major}x which is below the sm_70 minimum for this "
                   f"PyTorch build. Falling back to CPU.")
             print("   To use this GPU install PyTorch 1.x or upgrade to an sm_70+ card.")
@@ -171,8 +171,8 @@ def main():
 
     writer = SummaryWriter(log_dir=str(ckpt_dir / 'tb'))
 
-    print(f"\nCheckpoints → {ckpt_dir}")
-    print(f"TensorBoard → tensorboard --logdir {ckpt_dir / 'tb'}\n")
+    print(f"\nCheckpoints: {ckpt_dir}")
+    print(f"TensorBoard: tensorboard --logdir {ckpt_dir / 'tb'}\n")
 
     # ── Resume ─────────────────────────────────────────────────────────────
     start_epoch    = 0
@@ -230,7 +230,7 @@ def main():
                 'scheduler': scheduler.state_dict(),
                 'model_config': model_cfg, 'best_val_loss': best_val_loss,
             }, ckpt_dir / 'best.pth')
-            print(f"  ★  New best val loss: {best_val_loss:.4f}")
+            print(f"  [BEST] New best val loss: {best_val_loss:.4f}")
 
         # Periodic checkpoint
         if (epoch + 1) % save_every == 0:

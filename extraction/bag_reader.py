@@ -190,15 +190,15 @@ def read_bag(bag_path: str, config: dict) -> RawEpisode:
             # just show the ones we care about
             if t in [TOPIC_ARM, TOPIC_GRIPPER, TOPIC_CMD,
                      TOPIC_CAM_COMP, TOPIC_CAM_RAW, TOPIC_TCP, TOPIC_FT]:
-                print(f"    ✓ {t:60s}  [{c.msgtype}]")
+                print(f"    [OK] {t:60s}  [{c.msgtype}]")
 
         # Decide camera topic: prefer compressed
         if TOPIC_CAM_COMP in available:
             image_source_used = TOPIC_CAM_COMP
-            print(f"  → Using compressed camera: {TOPIC_CAM_COMP}")
+            print(f"  [INFO] Using compressed camera: {TOPIC_CAM_COMP}")
         elif TOPIC_CAM_RAW in available:
             image_source_used = TOPIC_CAM_RAW
-            print(f"  → Using raw camera: {TOPIC_CAM_RAW}")
+            print(f"  [INFO] Using raw camera: {TOPIC_CAM_RAW}")
         else:
             raise RuntimeError(
                 f"No camera topic found. Expected {TOPIC_CAM_COMP} or {TOPIC_CAM_RAW}"

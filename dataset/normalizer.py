@@ -59,7 +59,7 @@ class JointNormalizer:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'w') as f:
             json.dump(self.stats, f, indent=2)
-        print(f"Normalizer saved → {path}")
+        print(f"Normalizer saved: {path}")
 
     @classmethod
     def load(cls, path: str) -> JointNormalizer:

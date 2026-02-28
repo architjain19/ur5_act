@@ -73,7 +73,7 @@ def main():
 
     bags = find_bags(bags_dir)
     if not bags:
-        print(f"❌  No bags found in {bags_dir}")
+        print(f"ERROR: No bags found in {bags_dir}")
         print("    Expected sub-directories each containing metadata.yaml + .db3")
         return
 
@@ -90,10 +90,10 @@ def main():
         save_path = output_dir / ep_name
 
         print(f"\n{'='*60}")
-        print(f"[{i+1}/{len(bags)}]  {bag_path.name}  →  {ep_name}")
+        print(f"[{i+1}/{len(bags)}]  {bag_path.name}  ->  {ep_name}")
 
         if args.skip_existing and save_path.exists():
-            print("  ↩  Already extracted, skipping.")
+            print("  [SKIP] Already extracted, skipping.")
             success.append(bag_path)
             continue
 
@@ -103,16 +103,16 @@ def main():
             save_episode_hdf5(data, str(save_path))
             success.append(bag_path)
         except Exception as e:
-            print(f"  ❌  FAILED: {e}")
+            print(f"  ERROR: FAILED: {e}")
             traceback.print_exc()
             failed.append((bag_path, str(e)))
 
     print(f"\n{'='*60}")
-    print(f"Done.  ✓ {len(success)} extracted,  ✗ {len(failed)} failed")
+    print(f"Done. {len(success)} extracted, {len(failed)} failed")
     if failed:
         print("\nFailed bags:")
         for p, err in failed:
-            print(f"  {p}  —  {err}")
+            print(f"  {p} - {err}")
 
 
 if __name__ == '__main__':

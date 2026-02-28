@@ -2,7 +2,7 @@
 """
 scripts/inspect_bag.py
 
-Print a detailed summary of a bag before extraction — very useful
+print a detailed summary of a bag before extraction - very useful
 for verifying joint names, message counts, and topic availability.
 
 Usage:
@@ -39,9 +39,9 @@ def inspect(bag_path: str):
             count = sum(1 for _ in reader.messages(connections=[conn]))
             print(f"{conn.topic:<60}  {conn.msgtype:<35}  {count:>6}")
 
-        print(f"\n{'─'*65}")
-        print("Joint name inspection — reading first message from key topics:")
-        print(f"{'─'*65}")
+        print(f"\n{'-'*65}")
+        print("Joint name inspection - reading first message from key topics:")
+        print(f"{'-'*65}")
 
         # Topics to probe for joint names
         probe_topics = [
@@ -55,7 +55,7 @@ def inspect(bag_path: str):
 
         for topic in probe_topics:
             if topic not in conns_map:
-                print(f"\n  {topic} — NOT IN BAG")
+                print(f"\n  {topic} - NOT IN BAG")
                 continue
 
             conn = conns_map[topic]

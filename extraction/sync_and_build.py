@@ -114,7 +114,7 @@ def build_fixed_rate_episode(episode: RawEpisode, config: dict) -> dict:
     dt_ns    = int(1e9 / hz)
     time_grid = np.arange(t_start, t_end, dt_ns, dtype=np.int64)
     T = len(time_grid)
-    print(f"  Resampled to {hz}Hz → {T} timesteps ({duration_sec:.2f}s)")
+    print(f"  Resampled to {hz}Hz -> {T} timesteps ({duration_sec:.2f}s)")
 
     # State dimensions
     n_arm = len(config['joint_names'])    # 6
@@ -191,10 +191,10 @@ def build_fixed_rate_episode(episode: RawEpisode, config: dict) -> dict:
         actions[:-1, :n_arm] = obs_qpos[1:, :n_arm]
         actions[-1,  :n_arm] = obs_qpos[-1, :n_arm]
         actions[:, n_arm]    = obs_qpos[:, n_arm]   # gripper target = current gripper
-        print("  ⚠  Using fallback action source (joint_states[t+1]) — "
+        print("  WARNING: Using fallback action source (joint_states[t+1]) - "
               "command topic empty or disabled")
     else:
-        print(f"  ✓  Using /forward_position_controller/commands as action source")
+        print(f"  [OK] Using /forward_position_controller/commands as action source")
 
     return {
         'obs_joint_pos': obs_qpos,
@@ -249,4 +249,4 @@ def save_episode_hdf5(data: dict, save_path: str):
                           dtype='float32', compression='gzip', compression_opts=4)
 
     size_mb = Path(save_path).stat().st_size / 1e6
-    print(f"  Saved → {save_path}  ({T} steps, {size_mb:.1f} MB)")
+    print(f"  Saved: {save_path}  ({T} steps, {size_mb:.1f} MB)")

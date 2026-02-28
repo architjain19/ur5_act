@@ -109,7 +109,7 @@ def main():
     fig.suptitle(f'Episode: {ep_path.name}', fontsize=12)
     plot_path = ep_path.with_suffix('.png')
     plt.savefig(plot_path, dpi=120, bbox_inches='tight')
-    print(f"\nPlot saved → {plot_path}")
+    print(f"\nPlot saved: {plot_path}")
     plt.show()
 
     # ── Optional video ───────────────────────────────────────────────────────
@@ -130,7 +130,7 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             writer.write(frame)
         writer.release()
-        print(f"Video saved → {out_path}")
+        print(f"Video saved: {out_path}")
 
 
 if __name__ == '__main__':
