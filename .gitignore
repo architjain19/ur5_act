@@ -1,0 +1,93 @@
+# -----------------------------
+# Python bytecode / caches
+# -----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# -----------------------------
+# Build / packaging
+# -----------------------------
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# -----------------------------
+# Virtual environments
+# -----------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# -----------------------------
+# Tooling caches
+# -----------------------------
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# -----------------------------
+# Jupyter / notebooks
+# -----------------------------
+.ipynb_checkpoints/
+
+# -----------------------------
+# IDE / editor
+# -----------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# -----------------------------
+# OS files
+# -----------------------------
+.DS_Store
+Thumbs.db
+
+# -----------------------------
+# Logs / runtime dumps
+# -----------------------------
+*.log
+logs/
+
+# -----------------------------
+# ROS2 / colcon artifacts
+# -----------------------------
+log/
+install/
+build/
+
+# -----------------------------
+# ML / training artifacts
+# -----------------------------
+checkpoints/
+runs/
+wandb/
+tensorboard/
+events.out.tfevents.*
+
+# -----------------------------
+# Local env / secrets
+# -----------------------------
+.env
+.env.*
+
+# -----------------------------
+# Project data outputs (large/generated)
+# -----------------------------
+# data/raw_bags/
+# data/extracted/
+# data/lerobot_dataset/
+data/*
+

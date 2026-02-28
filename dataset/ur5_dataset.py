@@ -1,173 +1,154 @@
-import torch
-from torch.utils.data import Dataset
-import h5py
+"""
+dataset/ur5_dataset.py
+
+PyTorch Dataset for ACT training on extracted UR5 HDF5 episodes.
+
+Sample format:
+  images  : (1, 3, H, W)  float32  ImageNet-normalised
+  qpos    : (state_dim,)  float32  normalised joint state
+  actions : (chunk_size, action_dim)  float32  normalised action chunk
+  is_pad  : (chunk_size,)  bool  True for padded steps at end of episode
+"""
+from __future__ import annotations
+import random
 import numpy as np
-from pathlib import Path
+import torch
+from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
+from PIL import Image as PILImage
+import h5py
+from pathlib import Path
+
 from .normalizer import JointNormalizer
 
 
 class UR5ACTDataset(Dataset):
-    """
-    Dataset for ACT training on UR5 teleoperation data.
-    
-    Each sample:
-      - obs_image: (num_cameras, 3, H, W) float32 in [0,1]
-      - obs_qpos:  (state_dim,) normalized joint positions
-      - actions:   (chunk_size, action_dim) normalized target joints
-    """
+
     def __init__(
         self,
-        episode_paths: list,
-        chunk_size: int = 100,
-        normalizer: JointNormalizer = None,
-        use_wrist_cam: bool = False,
-        image_size: tuple = (224, 224),
+        episode_paths: list[str],
+        chunk_size: int,
+        normalizer: JointNormalizer,
+        image_size: tuple[int, int] = (224, 224),
         augment: bool = True,
     ):
-        self.episode_paths = episode_paths
+        self.paths      = episode_paths
         self.chunk_size = chunk_size
         self.normalizer = normalizer
-        self.use_wrist_cam = use_wrist_cam
         self.image_size = image_size
-        
-        # Build index: (episode_idx, start_timestep)
+
+        # Build flat index: (episode_idx, start_timestep)
         self.index = []
-        self.episode_lengths = []
-        
-        for ep_idx, path in enumerate(episode_paths):
-            with h5py.File(path, 'r') as f:
-                T = f['observations/qpos'].shape[0]
-                self.episode_lengths.append(T)
-                # Sample a starting point for every timestep
-                # (ACT samples uniformly over valid start positions)
-                for t in range(T):
-                    self.index.append((ep_idx, t))
-        
-        self.img_transform = transforms.Compose([
-            transforms.ToTensor(),          # HWC uint8 -> CHW float [0,1]
+        self.ep_lengths = []
+        for ep_idx, p in enumerate(self.paths):
+            with h5py.File(p, 'r') as f:
+                T = int(f.attrs['episode_len'])
+            self.ep_lengths.append(T)
+            for t in range(T):
+                self.index.append((ep_idx, t))
+
+        # Image transforms
+        base = [
             transforms.Resize(image_size),
+            transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                   std=[0.229, 0.224, 0.225]),
-        ] + ([
-            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
-            transforms.RandomAffine(degrees=2, translate=(0.02, 0.02)),
-        ] if augment else []))
-    
+        ]
+        aug = [
+            transforms.ColorJitter(brightness=0.3, contrast=0.3,
+                                    saturation=0.2, hue=0.05),
+            transforms.RandomAffine(degrees=3, translate=(0.03, 0.03),
+                                     scale=(0.97, 1.03)),
+        ] if augment else []
+        # Apply aug before normalising
+        self.img_transform = transforms.Compose(aug + base)
+
     def __len__(self):
         return len(self.index)
-    
-    def __getitem__(self, idx):
+
+    def __getitem__(self, idx: int) -> dict:
         ep_idx, t = self.index[idx]
-        path = self.episode_paths[ep_idx]
-        T = self.episode_lengths[ep_idx]
-        
-        with h5py.File(path, 'r') as f:
-            # Current observation
-            qpos = f['observations/qpos'][t]  # (state_dim,)
-            image = f['observations/images/main'][t]  # (H, W, 3) uint8
-            
-            wrist_image = None
-            if self.use_wrist_cam and 'observations/images/wrist' in f:
-                wrist_image = f['observations/images/wrist'][t]
-            
-            # Action chunk: t to t+chunk_size, pad at end of episode
+        T = self.ep_lengths[ep_idx]
+
+        with h5py.File(self.paths[ep_idx], 'r') as f:
+            qpos   = f['observations/qpos'][t].astype(np.float32)   # (state_dim,)
+            image  = f['observations/images/main'][t]                # (H, W, 3) uint8
+
+            # Action chunk [t, t+chunk_size)
             t_end = min(t + self.chunk_size, T)
-            actions = f['action'][t:t_end]          # (actual_len, action_dim)
-            actual_len = actions.shape[0]
-        
-        # Pad actions if near episode end
+            chunk = f['action'][t:t_end].astype(np.float32)          # (actual_len, action_dim)
+
+        actual_len = chunk.shape[0]
+
+        # Pad chunk to fixed size if near end of episode
         if actual_len < self.chunk_size:
-            pad = np.repeat(actions[-1:], self.chunk_size - actual_len, axis=0)
-            actions = np.concatenate([actions, pad], axis=0)
-        
-        # Convert to tensors
-        qpos = torch.from_numpy(qpos).float()
-        actions = torch.from_numpy(actions).float()
-        
-        # Normalize
-        if self.normalizer:
-            qpos = self.normalizer.normalize_qpos(qpos)
-            actions = self.normalizer.normalize_action(actions)
-        
-        # Process images
-        from PIL import Image as PILImage
-        img_pil = PILImage.fromarray(image)
-        img_tensor = self.img_transform(img_pil)  # (3, H, W)
-        
-        if wrist_image is not None:
-            wrist_pil = PILImage.fromarray(wrist_image)
-            wrist_tensor = self.img_transform(wrist_pil)
-            images = torch.stack([img_tensor, wrist_tensor], dim=0)  # (2, 3, H, W)
-        else:
-            images = img_tensor.unsqueeze(0)  # (1, 3, H, W)
-        
-        # is_pad: 1 where padded (for loss masking)
+            pad = np.tile(chunk[-1:], (self.chunk_size - actual_len, 1))
+            chunk = np.concatenate([chunk, pad], axis=0)
+
+        # to tensors
+        qpos   = torch.from_numpy(qpos)
+        chunk  = torch.from_numpy(chunk)
+
+        # normalise
+        qpos  = self.normalizer.normalize_qpos(qpos)
+        chunk = self.normalizer.normalize_action(chunk)
+
+        # image
+        img_pil    = PILImage.fromarray(image)
+        img_tensor = self.img_transform(img_pil)      # (3, H, W)
+        images     = img_tensor.unsqueeze(0)           # (1, 3, H, W)
+
         is_pad = torch.zeros(self.chunk_size, dtype=torch.bool)
         is_pad[actual_len:] = True
-        
+
         return {
-            'images': images,       # (num_cams, 3, H, W)
-            'qpos': qpos,           # (state_dim,)
-            'actions': actions,     # (chunk_size, action_dim)
-            'is_pad': is_pad,       # (chunk_size,) bool
+            'images':  images,   # (1, 3, H, W)
+            'qpos':    qpos,     # (state_dim,)
+            'actions': chunk,    # (chunk_size, action_dim)
+            'is_pad':  is_pad,   # (chunk_size,)
         }
 
 
-def make_dataloaders(config: dict, extracted_dir: str, val_split: float = 0.1):
-    """Create train/val dataloaders."""
-    from torch.utils.data import DataLoader
-    import random
-    
-    all_episodes = sorted(Path(extracted_dir).glob('episode_*.hdf5'))
-    assert len(all_episodes) > 0, f"No episodes found in {extracted_dir}"
-    
-    random.shuffle(all_episodes)
-    n_val = max(1, int(len(all_episodes) * val_split))
-    val_eps = all_episodes[:n_val]
-    train_eps = all_episodes[n_val:]
-    
-    print(f"Train: {len(train_eps)} episodes, Val: {len(val_eps)} episodes")
-    
-    # Compute normalization stats from training episodes only
-    normalizer = JointNormalizer.from_dataset([str(p) for p in train_eps])
+# ── Factory ──────────────────────────────────────────────────────────────────
+
+def make_dataloaders(
+    config: dict,
+    extracted_dir: str,
+    val_split: float = 0.1,
+    seed: int = 42,
+) -> tuple[DataLoader, DataLoader, JointNormalizer]:
+
+    all_eps = sorted(Path(extracted_dir).glob('episode_*.hdf5'))
+    assert len(all_eps) > 0, f"No episodes found in {extracted_dir}"
+
+    random.seed(seed)
+    eps = list(all_eps)
+    random.shuffle(eps)
+
+    n_val   = max(1, int(len(eps) * val_split))
+    val_eps  = eps[:n_val]
+    train_eps = eps[n_val:]
+
+    print(f"\nDataset split:  {len(train_eps)} train / {len(val_eps)} val")
+
+    # Compute normalizer from training episodes only
+    normalizer = JointNormalizer.from_episodes([str(p) for p in train_eps])
     normalizer.save('data/normalizer_stats.json')
-    
+
     chunk_size = config['chunk_size']
     image_size = tuple(config['image_size'])
-    use_wrist = config['topics'].get('camera_wrist') is not None
-    
-    train_dataset = UR5ACTDataset(
-        [str(p) for p in train_eps],
-        chunk_size=chunk_size,
-        normalizer=normalizer,
-        use_wrist_cam=use_wrist,
-        image_size=image_size,
-        augment=True,
-    )
-    val_dataset = UR5ACTDataset(
-        [str(p) for p in val_eps],
-        chunk_size=chunk_size,
-        normalizer=normalizer,
-        use_wrist_cam=use_wrist,
-        image_size=image_size,
-        augment=False,
-    )
-    
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config.get('batch_size', 8),
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True,
-        drop_last=True,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=config.get('batch_size', 8),
-        shuffle=False,
-        num_workers=2,
-        pin_memory=True,
-    )
-    
+    batch_size = config['training']['batch_size']
+
+    train_ds = UR5ACTDataset([str(p) for p in train_eps], chunk_size,
+                              normalizer, image_size, augment=True)
+    val_ds   = UR5ACTDataset([str(p) for p in val_eps],   chunk_size,
+                              normalizer, image_size, augment=False)
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                               num_workers=4, pin_memory=True, drop_last=True,
+                               persistent_workers=True)
+    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
+                               num_workers=2, pin_memory=True,
+                               persistent_workers=True)
+
     return train_loader, val_loader, normalizer

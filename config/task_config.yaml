@@ -1,30 +1,86 @@
+# ============================================================
+#  UR5 ACT Policy Config — derived from ROS2 bag metadata
+#  Bag file: bags_atomtemp_0.db3
+#  Setup: Right UR5 arm + Robotiq gripper + Orbbec camera
+#         Teleoperation via Oculus Quest + MoveIt Servo
+# ============================================================
+
 task: pick_and_place
-control_hz: 50
-chunk_size: 100          # ACT action chunk length
-image_size: [224, 224]
 
+# ── Timing ──────────────────────────────────────────────────
+# Camera publishes at ~22Hz — this is the bottleneck.
+# All streams will be resampled to this rate.
+control_hz: 20
+chunk_size: 40          # 40 steps @ 20Hz = 2 seconds lookahead
+exec_chunk: 8           # Re-query policy every 8 steps (0.4s) — temporal aggregation
+
+# ── Topics (confirmed from metadata.yaml) ───────────────────
 topics:
-  joint_states: /joint_states
-  joint_trajectory: /scaled_joint_trajectory_controller/follow_joint_trajectory
-  camera_rgb: /camera/color/image_raw
-  camera_wrist: /wrist_camera/color/image_raw   # optional second camera
-  gripper: /gripper/joint_states                 # adjust to your gripper topic
+  # Observed joint state of UR5 right arm (100Hz, 870 msgs/8.7s)
+  joint_states: /right/joint_states
 
+  # Robotiq gripper joint states (500Hz, 4353 msgs/8.7s)
+  gripper_states: /right_hand/joint_states
+
+  # ACTION SOURCE: forward_position_controller commands (Float64MultiArray)
+  # This is the actual commanded joint position sent during teleoperation.
+  # 767 msgs → best source of action labels (what the robot was TOLD to do)
+  action_commands: /right/forward_position_controller/commands
+
+  # Camera — use compressed (JPEG decode is faster, same content as raw)
+  # raw: 197 msgs, compressed: 198 msgs at ~22Hz
+  camera_rgb_compressed: /camera_0/color/image_raw/compressed
+  camera_rgb_raw: /camera_0/color/image_raw   # fallback if compressed fails
+
+  # Optional bonus observations (set use_* flags below to enable)
+  tcp_pose: /right/tcp_pose_broadcaster/pose           # EE pose (870 msgs)
+  force_torque: /right/force_torque_sensor_broadcaster/wrench  # F/T (870 msgs)
+
+# ── UR5 joint names (standard UR joint naming with /right prefix) ────
+# These appear in /right/joint_states in this order on UR robots:
 joint_names:
-  - shoulder_pan_joint
-  - shoulder_lift_joint
-  - elbow_joint
-  - wrist_1_joint
-  - wrist_2_joint
-  - wrist_3_joint
+  - right_shoulder_pan_joint
+  - right_shoulder_lift_joint
+  - right_elbow_joint
+  - right_wrist_1_joint
+  - right_wrist_2_joint
+  - right_wrist_3_joint
 
-gripper_joint: finger_joint   # or whatever your gripper reports
+# Number of arm joints (without gripper)
+num_arm_joints: 6
 
-normalization:
-  joint_pos_min: [-3.14159, -3.14159, -3.14159, -3.14159, -3.14159, -3.14159]
-  joint_pos_max: [ 3.14159,  3.14159,  3.14159,  3.14159,  3.14159,  3.14159]
+# ── Robotiq 2F-85 gripper ───────────────────────────────────
+# /right_hand/joint_states contains Robotiq finger joints.
+# The primary actuated joint that represents open/close state:
+gripper_joint: right_hand_finger_joint   # adjust if different
+# Gripper range: 0.0 = fully open, 0.8 = fully closed (radians for 2F-85)
+gripper_open_val: 0.0
+gripper_closed_val: 0.8
 
+# ── Optional observation features ───────────────────────────
+use_tcp_pose: false         # adds 7D pose (xyz + quaternion) to state
+use_force_torque: false     # adds 6D wrench to state
+use_wrist_camera: false     # set true if you add a wrist-mounted camera
 
+# ── Image settings ──────────────────────────────────────────
+image_size: [224, 224]      # resize all images to this (H, W)
+
+# ── State/action dimensions (auto-derived, documented here) ─
+# state_dim  = num_arm_joints(6) + gripper(1) = 7
+# action_dim = same as state_dim = 7
+# If use_tcp_pose=true:  state_dim = 7 + 7 = 14
+# If use_force_torque=true: state_dim += 6
+
+# ── Model architecture ──────────────────────────────────────
+latent_dim: 32
+d_model: 256
+nhead: 8
+num_encoder_layers: 4
+num_decoder_layers: 7
+kl_weight: 10.0
+pretrained_vision: true
+
+# ── Training ────────────────────────────────────────────────
 training:
   epochs: 2000
   lr: 1.0e-4
@@ -32,12 +88,15 @@ training:
   batch_size: 8
   grad_clip: 1.0
   save_every: 100
+  val_split: 0.1
+  seed: 42
 
-# Model architecture
-latent_dim: 32
-d_model: 256
-nhead: 8
-num_encoder_layers: 4
-num_decoder_layers: 7
-kl_weight: 10.0
-chunk_size: 100
+# ── Extraction ──────────────────────────────────────────────
+extraction:
+  # Max time gap (ms) between query time and nearest message before we flag it
+  max_gap_ms: 75.0
+  # Minimum episode length in seconds (shorter episodes are discarded)
+  min_episode_sec: 2.0
+  # If True, use /right/forward_position_controller/commands as action source.
+  # If False, fall back to using joint_states[t+1] as action (less accurate).
+  use_command_topic_as_action: true
