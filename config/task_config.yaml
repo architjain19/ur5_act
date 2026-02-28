@@ -1,0 +1,43 @@
+task: pick_and_place
+control_hz: 50
+chunk_size: 100          # ACT action chunk length
+image_size: [224, 224]
+
+topics:
+  joint_states: /joint_states
+  joint_trajectory: /scaled_joint_trajectory_controller/follow_joint_trajectory
+  camera_rgb: /camera/color/image_raw
+  camera_wrist: /wrist_camera/color/image_raw   # optional second camera
+  gripper: /gripper/joint_states                 # adjust to your gripper topic
+
+joint_names:
+  - shoulder_pan_joint
+  - shoulder_lift_joint
+  - elbow_joint
+  - wrist_1_joint
+  - wrist_2_joint
+  - wrist_3_joint
+
+gripper_joint: finger_joint   # or whatever your gripper reports
+
+normalization:
+  joint_pos_min: [-3.14159, -3.14159, -3.14159, -3.14159, -3.14159, -3.14159]
+  joint_pos_max: [ 3.14159,  3.14159,  3.14159,  3.14159,  3.14159,  3.14159]
+
+
+training:
+  epochs: 2000
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  batch_size: 8
+  grad_clip: 1.0
+  save_every: 100
+
+# Model architecture
+latent_dim: 32
+d_model: 256
+nhead: 8
+num_encoder_layers: 4
+num_decoder_layers: 7
+kl_weight: 10.0
+chunk_size: 100

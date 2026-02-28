@@ -1,0 +1,18 @@
+# Core
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+h5py>=3.8.0
+pyyaml>=6.0
+opencv-python>=4.7.0
+Pillow>=9.5.0
+
+# ROS2 bag reading (pure Python — no ROS2 install needed for extraction!)
+rosbags>=0.9.14
+
+# Training utilities
+tensorboard>=2.13.0
+tqdm>=4.65.0
+
+# Optional: for visualization script
+matplotlib>=3.7.0
