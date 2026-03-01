@@ -70,7 +70,7 @@ def inspect(bag_path: str):
                 break
 
         # Camera topics
-        print(f"\n{'─'*65}")
+        print(f"\n{'-'*65}")
         print("Camera topics:")
         cam_topics = [t for t in conns_map if 'camera' in t.lower() and 'color' in t.lower()]
         for t in cam_topics:
@@ -79,7 +79,7 @@ def inspect(bag_path: str):
             print(f"  {t}  [{conn.msgtype}]  {count} msgs")
 
         # Timing
-        print(f"\n{'─'*65}")
+        print(f"\n{'-'*65}")
         conns_all = list(reader.connections)
         all_ts = []
         for _, ts, _ in reader.messages():

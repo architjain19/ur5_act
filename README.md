@@ -59,6 +59,36 @@ ur5_act/
 pip install -r requirements.txt
 ```
 
+#### 1.1 - For simulation inference (no ros2 needed, but ur description required)
+
+1. Step 1: convert the xacro → plain URDF (one time only) - One-time: generate the UR5 and gripper URDF (tries ROS2, then GitHub, then built-in primitives)
+```bash
+python simulation/setup_urdf.py
+python simulation/setup_robotiq.py
+```
+
+
+2. Run inference with GUI window
+```bash
+python simulation/run_inference.py \
+  --checkpoint checkpoints/<run_folder>/best.pth \
+  --n_episodes 3
+```
+
+3. Headless (SSH or no display)
+```bash
+python simulation/run_inference.py \
+  --checkpoint checkpoints/<run_folder>/best.pth \
+  --headless --n_episodes 5
+```
+
+4. Save videos of each episode
+```bash
+python simulation/run_inference.py \
+  --checkpoint checkpoints/<run_folder>/best.pth \
+  --save_video
+```
+
 ### 2 — Organise your bags
 
 ```

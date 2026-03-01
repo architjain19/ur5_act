@@ -16,3 +16,6 @@ tqdm>=4.65.0
 
 # Optional: for visualization script
 matplotlib>=3.7.0
+
+# Simulator
+pybullet>=3.2.7
