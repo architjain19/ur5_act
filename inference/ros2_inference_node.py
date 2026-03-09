@@ -16,7 +16,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 
 from sensor_msgs.msg import JointState, CompressedImage, Image
-from std_msgs.msg import Header
+from std_msgs.msg import Header, Bool
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 from cv_bridge import CvBridge
@@ -114,6 +114,7 @@ class ACTNode(Node):
         self.action_buffer = []
         self.step_in_chunk = 0
         self.bridge        = CvBridge()
+        self.paused = False
 
         # ── Image transform ───────────────────────────────────────────────────
         self.img_transform = transforms.Compose([
@@ -171,6 +172,13 @@ class ACTNode(Node):
                 "Subscribed /camera_0/color/image_raw/compressed (BEST_EFFORT)"
             )
 
+        # Pause / Resume control
+        self.create_subscription(
+            Bool, '/act/pause',
+            self._pause_cb, reliable_qos
+        )
+        self.get_logger().info("Subscribed /act/pause (RELIABLE) — publish True=pause, False=resume")
+
         # ── Publisher ─────────────────────────────────────────────────────────
         traj_topic = '/right/joint_trajectory_controller/joint_trajectory'
         self.traj_pub = self.create_publisher(JointTrajectory, traj_topic, 10)
@@ -196,8 +204,34 @@ class ACTNode(Node):
             f"  │  traj_dt_sec   : {self.traj_dt:.2f} s                 │\n"
             f"  │  max_jump_rad  : {self.max_jump:.3f} rad              │\n"
             f"  │  device        : {str(self.device):<8}               │\n"
+            f"  │  pause topic   : /act/pause              │\n"
             f"  └─────────────────────────────────────────┘"
         )
+
+    # ── Pause / Resume callback ───────────────────────────────────────────────
+
+    def _pause_cb(self, msg: Bool):
+        requested_pause = bool(msg.data)
+
+        if requested_pause and not self.paused:
+            self.paused = True
+            self.get_logger().warn(
+                "ACT inference PAUSED - robot will hold position."
+                "Publish False to /act/pause to resume."
+            )
+
+        elif not requested_pause and self.paused:
+            self.paused = False
+            # Clear stale actions so the policy re-plans immediately from the current robot state rather than executing old buffered steps.
+            self.action_buffer = []
+            self.step_in_chunk = 0
+            self.get_logger().info(
+                "ACT inference RESUMED - action buffer cleared, re-planning next tick."
+            )
+
+        else:
+            state = "already paused" if self.paused else "already running"
+            self.get_logger().info(f"/act/pause received {requested_pause} but node is {state} - no change.")
 
     # ── Joint state callback (unified) ───────────────────────────────────────
 
@@ -327,6 +361,11 @@ class ACTNode(Node):
     # ── Control loop ──────────────────────────────────────────────────────────
 
     def _control_step(self):
+        # Pause guard
+        if self.paused:
+            self.get_logger().info("Paused - skipping control step.")
+            return
+
         if not self.obs_ready:
             self.get_logger().info(
                 'Waiting for observations...', throttle_duration_sec=2.0
