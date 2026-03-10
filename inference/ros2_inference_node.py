@@ -72,6 +72,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from model.act_model import ACTPolicy
 from dataset.normalizer import JointNormalizer
 
+from control_msgs.msg import GripperCommand
 
 # UR5 joint names — identical on sim and real hardware
 ARM_JOINT_NAMES = [
@@ -234,6 +235,13 @@ class ACTNode(Node):
         traj_topic = '/right/joint_trajectory_controller/joint_trajectory'
         self.traj_pub = self.create_publisher(JointTrajectory, traj_topic, 10)
         self.get_logger().info(f"Publishing to {traj_topic}")
+
+        gripper_traj_topic = ('/right_hand/joint_trajectory_controller/joint_trajectory' if self.sim_mode else '/right_hand/joint_trajectory_controller/joint_trajectory')
+        self.gripper_pub = self.create_publisher(JointTrajectory, gripper_traj_topic, 10)
+        self.get_logger().info(f"Gripper publishing to {gripper_traj_topic}")
+
+        self.gripper_traj_pub = self.create_publisher(GripperCommand, '/right_hand/gripper_input/auto', 10)
+        self.get_logger().info(f"Publishing to /right_hand/gripper_input/auto")
 
         # ── Control timer ─────────────────────────────────────────────────────
         self.create_timer(1.0 / self.ctrl_hz, self._control_step)
@@ -431,43 +439,66 @@ class ACTNode(Node):
         speed based on the UR safety configuration, providing a second layer
         of protection on top of the jump guard above.
         """
-        arm_target = action[:6].astype(np.float32)
+        arm_target     = action[:6].astype(np.float32)
+        gripper_target = float(action[6]) if len(action) > 6 else self.gripper_norm
 
         # Safety check before sending
         arm_target, clipped = self._check_jump(arm_target)
 
-        traj = JointTrajectory()
-        traj.header          = Header()
-        traj.header.stamp    = self.get_clock().now().to_msg()
-        traj.joint_names     = ARM_JOINT_NAMES
-
-        pt = JointTrajectoryPoint()
-        pt.positions         = arm_target.tolist()
-        # Zero terminal velocity — the controller handles intermediate vel
-        pt.velocities        = [0.0] * 6
-        pt.accelerations     = [0.0] * 6
-
-        # time_from_start: how far in the future the waypoint should be reached
-        total_ns     = int(self.traj_dt * 1e9)
-        pt.time_from_start = Duration(
+        # ── Shared trajectory boilerplate ─────────────────────────────────────
+        total_ns = int(self.traj_dt * 1e9)
+        tfs = Duration(
             sec     = total_ns // 1_000_000_000,
             nanosec = total_ns %  1_000_000_000,
         )
+        now = self.get_clock().now().to_msg()
+
+        # ── Arm trajectory ────────────────────────────────────────────────────
+        traj = JointTrajectory()
+        traj.header.stamp = now
+        traj.joint_names  = ARM_JOINT_NAMES
+
+        pt = JointTrajectoryPoint()
+        pt.positions       = arm_target.tolist()
+        pt.velocities      = [0.0] * 6
+        pt.accelerations   = [0.0] * 6
+        pt.time_from_start = tfs
         traj.points = [pt]
         self.traj_pub.publish(traj)
 
-        # Track last sent command for jump guard
+        # ── Gripper command ───────────────────────────────────────────────────
+        # Denormalise [0,1] → raw joint position
+        span          = self.gripper_close_val - self.gripper_open_val
+        gripper_raw   = float(
+            np.clip(gripper_target, 0.0, 0.8) * span + self.gripper_open_val
+        )
+
+        # gripper_traj = JointTrajectory()
+        # gripper_traj.header.stamp = now
+        # gripper_traj.joint_names  = [self.gripper_joint]
+
+        # gpt = JointTrajectoryPoint()
+        # gpt.positions       = [gripper_raw]
+        # gpt.velocities      = [0.0]
+        # gpt.accelerations   = [0.0]
+        # gpt.time_from_start = tfs
+        # gripper_traj.points = [gpt]
+        # self.gripper_pub.publish(gripper_traj)
+
+        self.gripper_traj_pub.publish(GripperCommand(position=gripper_raw, max_effort=0.0))
+
+        # ── Bookkeeping ───────────────────────────────────────────────────────
         if not clipped:
             self.last_cmd = arm_target.copy()
 
         if self.verbose:
-            delta = (
-                np.abs(arm_target - (self.last_cmd if self.last_cmd is not None
-                                     else self.arm_qpos))
-            )
+            delta = np.abs(arm_target - (
+                self.last_cmd if self.last_cmd is not None else self.arm_qpos
+            ))
             self.get_logger().info(
-                f"CMD: {[f'{v:.3f}' for v in arm_target]}  "
-                f"max_delta={delta.max():.3f} rad"
+                f"CMD arm  : {[f'{v:.3f}' for v in arm_target]}  "
+                f"max_delta = {delta.max():.3f} rad\n"
+                f"CMD grip : raw={gripper_raw:.3f}, target={gripper_target:.3f}"
             )
 
 
