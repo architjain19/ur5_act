@@ -75,12 +75,12 @@ from dataset.normalizer import JointNormalizer
 
 # UR5 joint names — identical on sim and real hardware
 ARM_JOINT_NAMES = [
-    'shoulder_pan_joint',
-    'shoulder_lift_joint',
-    'elbow_joint',
-    'wrist_1_joint',
-    'wrist_2_joint',
-    'wrist_3_joint',
+    'right_shoulder_pan_joint',
+    'right_shoulder_lift_joint',
+    'right_elbow_joint',
+    'right_wrist_1_joint',
+    'right_wrist_2_joint',
+    'right_wrist_3_joint',
 ]
 
 # UR5 joint velocity limits (rad/s) — from UR5 specs.
@@ -94,22 +94,22 @@ class ACTNode(Node):
         super().__init__('act_inference_node')
 
         # ── Parameters ───────────────────────────────────────────────────────
-        self.declare_parameter('checkpoint',         '')
+        self.declare_parameter('checkpoint',         '/home/aditya/Documents/ur5_act/checkpoints/best.pth')
         self.declare_parameter('config',             'config/task_config.yaml')
         self.declare_parameter('control_hz',         10)
         self.declare_parameter('exec_chunk',         8)
-        self.declare_parameter('verbose',            False)
-        self.declare_parameter('sim_mode',           True)
+        self.declare_parameter('verbose',            True)
+        self.declare_parameter('sim_mode',           False)
 
         # traj_dt_sec: time given to the controller to reach each waypoint.
         # Must be >= 1/control_hz. Larger = smoother/slower.
         # Recommended: 0.2 for sim, 0.5+ for hardware first runs.
-        self.declare_parameter('traj_dt_sec',        0.2)
+        self.declare_parameter('traj_dt_sec',        0.5)
 
         # max_joint_jump_rad: maximum allowed per-joint displacement in one
         # control step. Any action exceeding this is rejected (joint held).
         # Set to 0.0 to disable. Recommended: 0.3 sim, 0.15 hardware.
-        self.declare_parameter('max_joint_jump_rad', 0.3)
+        self.declare_parameter('max_joint_jump_rad', 2.5)
 
         ckpt_path    = self.get_parameter('checkpoint').value
         config_path  = self.get_parameter('config').value
@@ -127,7 +127,7 @@ class ACTNode(Node):
             self.config = yaml.safe_load(f)
 
         self.arm_joint_names   = ARM_JOINT_NAMES
-        self.gripper_joint     = self.config.get('gripper_joint', '')
+        self.gripper_joint     = self.config.get('gripper_joint', 'right_hand_finger_joint')
         self.gripper_open_val  = self.config.get('gripper_open_val',   0.0)
         self.gripper_close_val = self.config.get('gripper_closed_val', 0.8)
         self.img_h, self.img_w = self.config['image_size']
@@ -194,11 +194,11 @@ class ACTNode(Node):
         # ── Subscribers ───────────────────────────────────────────────────────
         # Joint states — same topic name on both sim and real UR driver
         self.create_subscription(
-            JointState, '/joint_states',
+            JointState, '/right/joint_states',
             self._joint_cb, joint_qos
         )
         self.get_logger().info(
-            f"Subscribed /joint_states "
+            f"Subscribed /right/joint_states "
             f"({'RELIABLE' if self.sim_mode else 'BEST_EFFORT'})"
         )
 
@@ -231,11 +231,7 @@ class ACTNode(Node):
         # ── Publisher ─────────────────────────────────────────────────────────
         # sim   → joint_trajectory_controller
         # hw    → scaled_joint_trajectory_controller (respects UR safety config)
-        traj_topic = (
-            '/joint_trajectory_controller/joint_trajectory'
-            if self.sim_mode else
-            '/scaled_joint_trajectory_controller/joint_trajectory'
-        )
+        traj_topic = '/right/joint_trajectory_controller/joint_trajectory'
         self.traj_pub = self.create_publisher(JointTrajectory, traj_topic, 10)
         self.get_logger().info(f"Publishing to {traj_topic}")
 
@@ -260,10 +256,19 @@ class ACTNode(Node):
     def _joint_cb(self, msg: JointState):
         """Handles /joint_states for both sim and real UR driver."""
         names = list(msg.name)
+        
+        if not hasattr(self, '_logged_joint_names'):
+            self.get_logger().info(f"Actual joint order: {names}")
+            self._logged_joint_names = True
+
+        # Always look up by name — order-independent
         for i, jname in enumerate(self.arm_joint_names):
             if jname in names:
-                self.arm_qpos[i] = float(msg.position[names.index(jname)])
-
+                idx = names.index(jname)
+                self.arm_qpos[i] = float(msg.position[idx])
+            else:
+                self.get_logger().warn(f"Joint '{jname}' not found in message!", 
+                                    throttle_duration_sec=10.0)
         # In sim mode gripper also comes from /joint_states
         if self.sim_mode and self.gripper_joint and self.gripper_joint in names:
             self._parse_gripper(float(msg.position[names.index(self.gripper_joint)]))
