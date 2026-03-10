@@ -2,50 +2,7 @@
 """
 inference/ros2_inference_node.py
 
-ACT policy inference node for both simulation and real UR5 hardware.
-Both modes use JointTrajectory — NO forward_position_controller.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Mode          | sim_mode=true              | sim_mode=false (hardware)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Joint states  | /joint_states              | /joint_states (UR driver)
- Gripper states| /joint_states              | /right_hand/joint_states
- Camera        | /camera_0/color/image_raw  | /camera_0/color/image_raw/compressed
- Command topic | /joint_trajectory_controller/joint_trajectory
-               |                            | /scaled_joint_trajectory_controller/joint_trajectory
- QoS           | RELIABLE                   | BEST_EFFORT (UR driver default)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Why JointTrajectory instead of forward_position_controller:
-  - forward_position_controller sends raw positions every tick; the robot
-    firmware computes velocity by differencing positions / dt, which causes
-    huge velocity spikes when consecutive policy outputs are far apart.
-    This is what triggered the UR pendant "velocity too high" warning.
-  - JointTrajectory lets you set time_from_start per waypoint, so the
-    controller spline-interpolates within joint velocity/accel limits.
-  - scaled_joint_trajectory_controller (real UR) additionally scales the
-    entire trajectory speed based on the safety configuration.
-
-Safety layers added in this node (on top of controller limits):
-  1. Jump guard   — rejects any action where any joint moves more than
-                    max_joint_jump_rad in a single step. The previous
-                    position is held instead and a warning is logged.
-  2. Velocity cap — traj_dt_sec sets the minimum time given to reach
-                    each waypoint. Increase it to slow down execution.
-
-Run (simulation):
-  python inference/ros2_inference_node.py --ros-args \\
-    -p checkpoint:=/path/to/best.pth \\
-    -p config:=/path/to/task_config.yaml \\
-    -p sim_mode:=true
-
-Run (real hardware):
-  python inference/ros2_inference_node.py --ros-args \\
-    -p checkpoint:=/path/to/best.pth \\
-    -p config:=/path/to/task_config.yaml \\
-    -p sim_mode:=false \\
-    -p traj_dt_sec:=0.5 \\
-    -p max_joint_jump_rad:=0.2
+ACT policy inference node for real UR5 hardware.
 """
 
 import sys
@@ -74,7 +31,6 @@ from dataset.normalizer import JointNormalizer
 
 from control_msgs.msg import GripperCommand
 
-# UR5 joint names — identical on sim and real hardware
 ARM_JOINT_NAMES = [
     'right_shoulder_pan_joint',
     'right_shoulder_lift_joint',
@@ -84,8 +40,6 @@ ARM_JOINT_NAMES = [
     'right_wrist_3_joint',
 ]
 
-# UR5 joint velocity limits (rad/s) — from UR5 specs.
-# The controller already enforces these; we use them only for logging.
 UR5_VEL_LIMITS = np.array([3.14, 3.14, 3.14, 3.14, 3.14, 3.14], dtype=np.float32)
 
 
@@ -97,19 +51,13 @@ class ACTNode(Node):
         # ── Parameters ───────────────────────────────────────────────────────
         self.declare_parameter('checkpoint',         '/home/aditya/Documents/ur5_act/checkpoints/best.pth')
         self.declare_parameter('config',             'config/task_config.yaml')
-        self.declare_parameter('control_hz',         10)
+        self.declare_parameter('control_hz',         5)             # original=10
         self.declare_parameter('exec_chunk',         8)
         self.declare_parameter('verbose',            True)
         self.declare_parameter('sim_mode',           False)
 
-        # traj_dt_sec: time given to the controller to reach each waypoint.
-        # Must be >= 1/control_hz. Larger = smoother/slower.
-        # Recommended: 0.2 for sim, 0.5+ for hardware first runs.
-        self.declare_parameter('traj_dt_sec',        0.5)
+        self.declare_parameter('traj_dt_sec',        1.0)           # original=1.0
 
-        # max_joint_jump_rad: maximum allowed per-joint displacement in one
-        # control step. Any action exceeding this is rejected (joint held).
-        # Set to 0.0 to disable. Recommended: 0.3 sim, 0.15 hardware.
         self.declare_parameter('max_joint_jump_rad', 2.5)
 
         ckpt_path    = self.get_parameter('checkpoint').value
@@ -140,7 +88,6 @@ class ACTNode(Node):
         with open(ckpt_dir / 'model_config.json') as f:
             model_cfg = json.load(f)
 
-        # GPU capability check — MX330 is sm_61, PyTorch 2.10 needs sm_70+
         self.device = torch.device('cpu')
         if torch.cuda.is_available():
             cap = torch.cuda.get_device_capability(0)
@@ -177,8 +124,6 @@ class ACTNode(Node):
         ])
 
         # ── QoS profiles ──────────────────────────────────────────────────────
-        # ros_gz_bridge (sim) → RELIABLE
-        # UR ROS2 driver (hardware) → BEST_EFFORT
         reliable_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
@@ -193,7 +138,6 @@ class ACTNode(Node):
         cam_qos   = reliable_qos if self.sim_mode else besteffort_qos
 
         # ── Subscribers ───────────────────────────────────────────────────────
-        # Joint states — same topic name on both sim and real UR driver
         self.create_subscription(
             JointState, '/right/joint_states',
             self._joint_cb, joint_qos
@@ -213,14 +157,12 @@ class ACTNode(Node):
 
         # Camera
         if self.sim_mode:
-            # ros_gz_bridge publishes raw Image with RELIABLE QoS
             self.create_subscription(
                 Image, '/camera_0/color/image_raw',
                 self._img_raw_cb, cam_qos
             )
             self.get_logger().info("Subscribed /camera_0/color/image_raw (RELIABLE)")
         else:
-            # Real camera driver publishes CompressedImage with BEST_EFFORT
             self.create_subscription(
                 CompressedImage, '/camera_0/color/image_raw/compressed',
                 self._img_compressed_cb, cam_qos
@@ -230,8 +172,6 @@ class ACTNode(Node):
             )
 
         # ── Publisher ─────────────────────────────────────────────────────────
-        # sim   → joint_trajectory_controller
-        # hw    → scaled_joint_trajectory_controller (respects UR safety config)
         traj_topic = '/right/joint_trajectory_controller/joint_trajectory'
         self.traj_pub = self.create_publisher(JointTrajectory, traj_topic, 10)
         self.get_logger().info(f"Publishing to {traj_topic}")
@@ -269,7 +209,6 @@ class ACTNode(Node):
             self.get_logger().info(f"Actual joint order: {names}")
             self._logged_joint_names = True
 
-        # Always look up by name — order-independent
         for i, jname in enumerate(self.arm_joint_names):
             if jname in names:
                 idx = names.index(jname)
@@ -277,12 +216,10 @@ class ACTNode(Node):
             else:
                 self.get_logger().warn(f"Joint '{jname}' not found in message!", 
                                     throttle_duration_sec=10.0)
-        # In sim mode gripper also comes from /joint_states
         if self.sim_mode and self.gripper_joint and self.gripper_joint in names:
             self._parse_gripper(float(msg.position[names.index(self.gripper_joint)]))
 
     def _gripper_cb(self, msg: JointState):
-        """Hardware only: /right_hand/joint_states."""
         names = list(msg.name)
         if self.gripper_joint and self.gripper_joint in names:
             self._parse_gripper(float(msg.position[names.index(self.gripper_joint)]))
@@ -304,7 +241,6 @@ class ACTNode(Node):
             self.current_image = np.array(img)
             self.obs_ready = True
         except Exception as e:
-            # cv_bridge may fail on numpy ABI mismatch — fallback to pure numpy
             self.get_logger().warn(
                 f"cv_bridge decode failed ({e}), using numpy fallback",
                 throttle_duration_sec=5.0
@@ -359,17 +295,6 @@ class ACTNode(Node):
     # ── Safety: jump guard ────────────────────────────────────────────────────
 
     def _check_jump(self, target_arm: np.ndarray) -> tuple[np.ndarray, bool]:
-        """
-        Compare target arm positions against last sent command (or current
-        joint states on the first step).
-
-        Returns (safe_target, was_clipped):
-          - If jump is within limit → (target_arm, False)
-          - If any joint exceeds max_jump_rad → hold last command, (last_cmd, True)
-
-        This prevents the pendant "velocity too high" error that occurs when
-        consecutive policy outputs are far apart in joint space.
-        """
         if self.max_jump <= 0.0:
             return target_arm, False
 
@@ -387,7 +312,6 @@ class ACTNode(Node):
             # Hold last command; if no command sent yet, hold current position
             return reference.copy(), True
 
-        # Log implied velocity for transparency
         if self.verbose:
             implied_vel = delta / self.traj_dt
             over = np.where(implied_vel > UR5_VEL_LIMITS)[0]
@@ -426,19 +350,6 @@ class ACTNode(Node):
     # ── Action publishing ─────────────────────────────────────────────────────
 
     def _publish_action(self, action: np.ndarray):
-        """
-        Publish a single-waypoint JointTrajectory.
-
-        action shape: (action_dim,)  — arm(6) + gripper(1)
-
-        traj_dt_sec tells the controller how long it has to reach the waypoint.
-        The spline interpolator will respect joint velocity/accel limits within
-        that window — so larger traj_dt_sec = slower, smoother motion.
-
-        On hardware, scaled_joint_trajectory_controller additionally scales
-        speed based on the UR safety configuration, providing a second layer
-        of protection on top of the jump guard above.
-        """
         arm_target     = action[:6].astype(np.float32)
         gripper_target = float(action[6]) if len(action) > 6 else self.gripper_norm
 

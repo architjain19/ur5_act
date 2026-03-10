@@ -6,8 +6,8 @@ python inference/ros2_inference_node.py --ros-args \
   -p checkpoint:=checkpoints/best.pth \
   -p config:=config/task_config.yaml \
   -p sim_mode:=false \
-  -p traj_dt_sec:=0.5 \
-  -p max_joint_jump_rad:=2.5 \
+  # -p traj_dt_sec:=0.8 \
+  # -p max_joint_jump_rad:=2.5 \
   -p verbose:=true
 
 
