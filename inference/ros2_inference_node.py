@@ -109,7 +109,8 @@ class ACTNode(Node):
         self.last_cmd      = None   # last successfully sent arm positions
         self.gripper_norm  = 0.0
         self.current_image = None
-        self.obs_ready     = False
+        self.joints_ready  = False   # set True on first real /joint_states msg
+        self.obs_ready     = False   # set True once both joints + image ready
 
         self.action_buffer = []
         self.step_in_chunk = 0
@@ -250,6 +251,18 @@ class ACTNode(Node):
             else:
                 self.get_logger().warn(f"Joint '{jname}' not found in message!", 
                                     throttle_duration_sec=10.0)
+
+        if not self.joints_ready:
+            all_found = all(jn in names for jn in self.arm_joint_names)
+            if all_found:
+                self.joints_ready = True
+                self.last_cmd = self.arm_qpos.copy()  # seed jump guard from actual position
+                self.get_logger().info(
+                    f"Joint states initialised — seeding last_cmd from actual position: "
+                    f"{[f'{v:.3f}' for v in self.arm_qpos]}"
+                )
+                self._update_obs_ready()
+
         if self.sim_mode and self.gripper_joint and self.gripper_joint in names:
             self._parse_gripper(float(msg.position[names.index(self.gripper_joint)]))
 
@@ -273,7 +286,6 @@ class ACTNode(Node):
         try:
             img = self.bridge.imgmsg_to_cv2(msg, 'rgb8')
             self.current_image = np.array(img)
-            self.obs_ready = True
         except Exception as e:
             self.get_logger().warn(
                 f"cv_bridge decode failed ({e}), using numpy fallback",
@@ -290,9 +302,10 @@ class ACTNode(Node):
                 elif enc in ('bgra8',):
                     img = img[:, :, 2::-1].copy()
                 self.current_image = img.astype(np.uint8)
-                self.obs_ready = True
             except Exception as e2:
                 self.get_logger().error(f"numpy fallback failed: {e2}")
+                return
+        self._update_obs_ready()
 
     def _img_compressed_cb(self, msg: CompressedImage):
         """Hardware: compressed image from camera driver."""
@@ -301,7 +314,12 @@ class ACTNode(Node):
         img  = cv2.imdecode(data, cv2.IMREAD_COLOR)
         if img is not None:
             self.current_image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            self._update_obs_ready()
+
+    def _update_obs_ready(self):
+        if not self.obs_ready and self.joints_ready and self.current_image is not None:
             self.obs_ready = True
+            self.get_logger().info("All observations ready - inference starting.")
 
     # ── Policy inference ──────────────────────────────────────────────────────
 
