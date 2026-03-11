@@ -1,6 +1,6 @@
-# source /home/aditya/anaconda3/etc/profile.d/conda.sh
-# conda activate ur5_act
-# source /opt/ros/humble/setup.bash
+source /home/aditya/anaconda3/etc/profile.d/conda.sh
+conda activate ur5_act
+source /opt/ros/humble/setup.bash
 ros2 control switch_controllers   --deactivate forward_position_controller   --activate joint_trajectory_controller   -c /right/controller_manager
 python inference/ros2_inference_node.py --ros-args \
   -p checkpoint:=checkpoints/best.pth \
