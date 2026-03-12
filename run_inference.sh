@@ -3,7 +3,7 @@ conda activate ur5_act
 source /opt/ros/humble/setup.bash
 ros2 control switch_controllers   --deactivate forward_position_controller   --activate joint_trajectory_controller   -c /right/controller_manager
 python inference/ros2_inference_node.py --ros-args \
-  -p checkpoint:=checkpoints/best.pth \
+  -p checkpoint:=checkpoints/force_torque/best.pth \
   -p config:=config/task_config.yaml \
   -p sim_mode:=false \
   # -p traj_dt_sec:=0.8 \
