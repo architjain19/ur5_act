@@ -90,4 +90,6 @@ events.out.tfevents.*
 # data/extracted/
 # data/lerobot_dataset/
 data/*
+checkpoints*
+
 

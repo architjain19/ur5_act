@@ -11,8 +11,8 @@ task: pick_and_place
 # Camera publishes at ~22Hz — this is the bottleneck.
 # All streams will be resampled to this rate.
 control_hz: 20
-chunk_size: 40          # 40 steps @ 20Hz = 2 seconds lookahead
-exec_chunk: 8           # Re-query policy every 8 steps (0.4s) — temporal aggregation
+chunk_size: 50         # 50 steps @ 20Hz = 2.5 seconds lookahead
+exec_chunk: 10          # Re-query policy every 8 steps (0.4s) — temporal aggregation
 
 # ── Topics (confirmed from metadata.yaml) ───────────────────
 topics:
@@ -59,7 +59,7 @@ gripper_closed_val: 0.8
 
 # ── Optional observation features ───────────────────────────
 use_tcp_pose: false         # adds 7D pose (xyz + quaternion) to state
-use_force_torque: false     # adds 6D wrench to state
+use_force_torque: true     # adds 6D wrench to state
 use_wrist_camera: false     # set true if you add a wrist-mounted camera
 
 # ── Image settings ──────────────────────────────────────────
@@ -77,17 +77,26 @@ d_model: 256
 nhead: 8
 num_encoder_layers: 4
 num_decoder_layers: 7
-kl_weight: 10.0
+
+# Reduced KL weight to prevent posterior collapse
+kl_weight: 0.05
+
 pretrained_vision: true
 
 # ── Training ────────────────────────────────────────────────
 training:
-  epochs: 2000
+  epochs: 400
   lr: 1.0e-4
   weight_decay: 1.0e-4
-  batch_size: 8
+
+  # Larger batch improves transformer stability
+  batch_size: 16
+
   grad_clip: 1.0
-  save_every: 100
+
+  # Save checkpoints more frequently for easier recovery
+  save_every: 50
+
   val_split: 0.1
   seed: 42
 
@@ -95,8 +104,10 @@ training:
 extraction:
   # Max time gap (ms) between query time and nearest message before we flag it
   max_gap_ms: 75.0
+
   # Minimum episode length in seconds (shorter episodes are discarded)
   min_episode_sec: 2.0
+
   # If True, use /right/forward_position_controller/commands as action source.
   # If False, fall back to using joint_states[t+1] as action (less accurate).
   use_command_topic_as_action: true
